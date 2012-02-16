@@ -1,40 +1,91 @@
 require "rexml/document"
 require "CSV"
 
+class Vertex
+  attr_accessor :name, :distance, :predecessor, :conversion
+  
+  def initialize(name)
+    @name = name
+    @distance = 512 #infinity for our purposes
+    @conversion = 1
+    @predecessor = nil
+  end
+end
+
+class Edge
+   attr_accessor :source, :dest, :weight 
+   
+   def initialize(source, dest, weight)
+     @source = source
+     @dest = dest
+     @weight = weight
+   end
+end
+
+def bankers_round(value)
+  base = (value*100).truncate
+  decimal = value*100 - (value*100).truncate
+  if base.odd?
+    if decimal >= 0.5 
+      base += 1
+    end
+  end
+  base.to_f/100
+end
+
 product = "DM1182"
 target_currency = "USD"
 
 xml= File.read("RATES.xml")
 doc = REXML::Document.new(xml)
-all_rates = Hash.new { |hash, key| hash[key] = [] }
+
+conversion_multiplier = {}
+vertices = {}
+edges = []
 doc.elements.each('rates/rate') do |r|
-  all_rates[r.elements["to"].text] << { r.elements["from"].text => r.elements["conversion"].text}
+  edges << Edge.new(r.elements["from"].text, r.elements["to"].text, r.elements["conversion"].text.to_f)
+  vertices[r.elements["to"].text] = Vertex.new(r.elements["to"].text) unless vertices[r.elements["to"].text]
+  vertices[r.elements["from"].text] = Vertex.new(r.elements["from"].text) unless vertices[r.elements["from"].text]
 end
 
-conversions = {}
-all_rates[target_currency].each { |conversion|
-  conversions[conversion.keys.first] = conversion[conversion.keys.first]
-  puts "conversions #{conversions}"
-}
-all_rates.each { |key, value| 
-  if key != target_currency
-    puts "key: #{key}"
-    value.each { |conversion|
-      if conversions[conversion.keys.first]
-        puts "conversion: #{key} => #{conversion.keys.first}"
+#Bellman Ford using each non-target-currency as a source
+vertices.each do |ok, ov|
+  if (ok != target_currency)
+    vertices.each do |k,v| 
+      v.predecessor = nil
+      v.distance = 1024
+      v.conversion = 1
+      if k == ok
+        v.distance = 0
       end
-      if !conversions[key]
-        # still need to get from here to target
-        
-        # puts "conversion: #{key} => #{conversion.keys.first}"
+    end
+    (vertices.length-1).times do
+      edges.each do |e|
+        u = vertices[e.source]
+        v = vertices[e.dest]
+        if u.distance + 1 < v.distance
+          v.distance = u.distance + 1
+          v.predecessor = u
+          v.conversion = u.conversion * e.weight
+        end
       end
-    }
+    end
+    #we only care about the target currency
+    conversion_multiplier[ok] = vertices[target_currency].conversion
   end
-}
+end
 
-# CSV.foreach("SAMPLE_TRANS.csv") do |row|
-#   puts "Amount: #{row[2]}" unless row[1] != product
-#   unless target_currency == row[2].split[1]
-#     puts "must convert"
-#   end
-# end
+total = 0
+CSV.foreach("TRANS.csv") do |row|
+  if row[1] == product
+    currency = row[2].split[1]
+    amount = row[2].to_f
+    if target_currency == currency
+      total += amount
+    else
+      puts "adding #{bankers_round(amount * conversion_multiplier[currency])}"
+      total += bankers_round(amount * conversion_multiplier[currency])
+    end
+  end
+end
+puts "Total: #{total}"
