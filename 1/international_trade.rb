@@ -1,5 +1,6 @@
 require "rexml/document"
 require "CSV"
+require 'bigdecimal'
 
 class Vertex
   attr_accessor :name, :distance, :predecessor, :conversion
@@ -7,7 +8,7 @@ class Vertex
   def initialize(name)
     @name = name
     @distance = 1024 #infinity for our purposes
-    @conversion = 1
+    @conversion = BigDecimal.new("1")
     @predecessor = nil
   end
 end
@@ -23,13 +24,15 @@ class Edge
 end
 
 def bankers_round(value)
-  base = (value*100).truncate
-  decimal = value*100 - (value*100).truncate
-  if base.odd?
-    if decimal >= 0.5 
-      base += 1
-    end
+  puts"value: #{value.to_f}, #{value.class.name}"
+  base = BigDecimal.new(value.truncate.to_s)
+  decimal = value - base
+  puts "decimal: #{decimal}, #{decimal.class.name}"
+  if base % 2 != 0 && decimal >= 0.5
+    puts "rounding from #{base} => #{base+1} <---------------------------"
+    base += 1
   end
+  puts "base: #{base.to_f}, #{base.class.name}"
   base
 end
 
@@ -42,13 +45,18 @@ trans_file = "TRANS.csv"
 product = "DM1182"
 target_currency = "USD"
 
+
+
+e_to_u = BigDecimal.new("1.3442")*BigDecimal.new("1.0079")*BigDecimal.new("1.0090")
+p "#{e_to_u}"
+
 xml= File.read(rate_file)
 doc = REXML::Document.new(xml)
 
 vertices = {}
 edges = []
 doc.elements.each('rates/rate') do |r|
-  edges << Edge.new(r.elements["to"].text, r.elements["from"].text, r.elements["conversion"].text.to_f)
+  edges << Edge.new(r.elements["to"].text, r.elements["from"].text, BigDecimal.new(r.elements["conversion"].text))
   vertices[r.elements["to"].text] = Vertex.new(r.elements["to"].text) unless vertices[r.elements["to"].text]
   vertices[r.elements["from"].text] = Vertex.new(r.elements["from"].text) unless vertices[r.elements["from"].text]
 end
@@ -68,21 +76,28 @@ vertices[target_currency].distance = 0
   end
 end
 
-# vertices.each do |k,v|
-#   puts "#{v.name} => #{target_currency} (#{v.conversion})"
-# end
+vertices.each do |k,v|
+  puts "#{v.name} => #{target_currency} (#{v.conversion.to_f}, #{v.conversion.class.name})"
+end
 
-total = 0
+total = BigDecimal.new("0")
 CSV.foreach(trans_file) do |row|
   if row[1] == product
+    puts "row: #{row}"
     currency = row[2].split[1]
-    amount = row[2].to_f
+    amount = BigDecimal.new(row[2].split[0])*100
+    puts "adding #{amount.to_f}, #{amount.class.name}"
     if target_currency == currency
-      total += amount*100
+      total += amount
     else
-      # puts "adding #{bankers_round(amount * vertices[currency].conversion)}"
-      total += bankers_round(amount * vertices[currency].conversion)
+      puts "#{amount} * #{vertices[currency].conversion} => #{amount * vertices[currency].conversion}"
+      to_add = bankers_round(amount * vertices[currency].conversion)
+      puts "converted amount: #{to_add}"
+      total += to_add
     end
+    puts "total value: #{total.to_f}, type: #{total.class.name}"
+    puts "---------------------"
   end
+
 end
-puts "#{total/100}"
+puts "#{(total/100).to_f}"
